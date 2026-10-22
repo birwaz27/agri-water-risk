@@ -1,6 +1,11 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from pydantic import BaseModel
 from typing import Optional
+
+# Import local modules
+from model import WaterRiskModel
+from alert_service import AlertService
+from vision_model import MobileNetDiseaseDetector
 
 app = FastAPI(
     title="Agri-Water Risk & Disease Early Warning API",
@@ -8,7 +13,12 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Request Models
+# Initialize module engines
+risk_engine = WaterRiskModel()
+alert_engine = AlertService()
+vision_engine = MobileNetDiseaseDetector()
+
+# Input Models
 class WaterQualityInput(BaseModel):
     pond_id: str
     temperature_c: float
@@ -18,9 +28,7 @@ class WaterQualityInput(BaseModel):
 
 class AlertRequest(BaseModel):
     farmer_phone: str
-    language: Optional[str] = "kn"  # Default Kannada
     risk_level: str
-    message: str
 
 
 @app.get("/")
@@ -34,42 +42,30 @@ def health_check():
 
 @app.post("/api/water-risk/predict")
 def predict_water_risk(data: WaterQualityInput):
-    """
-    Evaluates water toxicity & disease risk using water parameters (Random Forest logic).
-    """
-    ph_deviation = abs(data.ph_level - 7.5)
-    do_deficit = max(0.0, 6.0 - data.dissolved_oxygen)
-    
-    risk_score = round(min(1.0, (ph_deviation * 0.25) + (do_deficit * 0.35)), 2)
-    
-    if risk_score >= 0.7:
-        risk_level = "High"
-        recommendation = "Immediate aeration required. High risk of disease outbreak."
-    elif risk_score >= 0.4:
-        risk_level = "Medium"
-        recommendation = "Monitor water parameters closely over the next 12 hours."
-    else:
-        risk_level = "Low"
-        recommendation = "Water quality parameters are within safe operating limits."
-
+    """Calculates risk using WaterRiskModel in model.py"""
+    analysis = risk_engine.evaluate_risk(
+        ph=data.ph_level,
+        do=data.dissolved_oxygen,
+        temp=data.temperature_c,
+        salinity=data.salinity_ppt
+    )
     return {
         "pond_id": data.pond_id,
-        "risk_score": risk_score,
-        "risk_level": risk_level,
-        "recommendation": recommendation,
-        "trigger_alert": risk_level in ["Medium", "High"]
+        "risk_analysis": analysis
     }
 
 
 @app.post("/api/alerts/send-sms")
 def send_sms_alert(alert: AlertRequest):
-    """
-    Triggers automated SMS/Voice alerts (Fast2SMS / Twilio API integration).
-    """
-    return {
-        "status": "queued",
-        "recipient": alert.farmer_phone,
-        "language": alert.language,
-        "risk_level": alert.risk_level,
-        "delivery_status": "sent_to_gateway"
-    }
+    """Dispatches Kannada SMS using AlertService in alert_service.py"""
+    return alert_engine.send_sms(
+        phone_number=alert.farmer_phone,
+        risk_level=alert.risk_level
+    )
+
+
+@app.post("/api/disease/detect")
+async def detect_disease(file: UploadFile = File(...)):
+    """Diagnoses disease using MobileNetDiseaseDetector in vision_model.py"""
+    image_bytes = await file.read()
+    return vision_engine.predict_disease(image_bytes)
