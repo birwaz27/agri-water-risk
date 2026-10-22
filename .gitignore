@@ -1,0 +1,19 @@
+# Python cache & virtual environment
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+
+# Secrets
+.env
+
+# Editor settings
+.vscode/
+.idea/
+
+# Large model artifacts
+*.pkl
+*.h5
+*.onnx
